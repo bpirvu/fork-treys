@@ -52,7 +52,8 @@ class TreysCLITests(unittest.TestCase):
                 self.assertEqual(output["game"], "holdem")
                 self.assertEqual(output["winners"], [{"index": 1, "name": "p1"}])
                 self.assertEqual(output["players"][0]["class_name"], "Straight")
-                self.assertGreater(output["players"][0]["percentage"], output["players"][1]["percentage"])
+                self.assertGreater(output["players"][0]["rank_percentage"], output["players"][1]["rank_percentage"])
+                self.assertEqual(output["players"][0]["rank_percentage"], output["players"][0]["percentage"])
 
     def test_plo_eval_accepts_three_four_and_five_board_cards(self) -> None:
         board_variants = [
@@ -115,6 +116,10 @@ class TreysCLITests(unittest.TestCase):
         self.assertEqual(output["stages"][0]["leaders"], [{"index": 2, "name": "p2"}])
         self.assertEqual(output["result"]["winners"], [{"index": 2, "name": "p2"}])
         self.assertEqual(output["result"]["class_name"], "Two Pair")
+        self.assertEqual(
+            output["stages"][0]["players"][0]["rank_percentage"],
+            output["stages"][0]["players"][0]["percentage"],
+        )
 
     def test_plo_summary_reports_lead_changes(self) -> None:
         completed, output = run_cli_json(
@@ -187,11 +192,6 @@ class TreysCLITests(unittest.TestCase):
             },
             {
                 "game": "holdem",
-                "board": ["Ah", "Kd"],
-                "players": [{"hand": ["Qs", "Th"]}],
-            },
-            {
-                "game": "holdem",
                 "board": ["Ah", "Kd", "Jc"],
                 "players": [],
             },
@@ -203,6 +203,151 @@ class TreysCLITests(unittest.TestCase):
                 self.assertEqual(completed.returncode, 2)
                 error = json.loads(completed.stderr)
                 self.assertEqual(error["error"]["type"], "validation_error")
+
+    def test_eval_short_board_error_points_to_strength(self) -> None:
+        completed = run_cli(
+            "eval",
+            {
+                "game": "holdem",
+                "board": ["Ah"],
+                "players": [{"name": "p1", "hand": ["Qs", "Th"]}],
+            },
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        error = json.loads(completed.stderr)
+        self.assertIn("treys strength", error["error"]["message"])
+
+    def test_strength_preflop_uses_fast_table_and_is_canonical(self) -> None:
+        hands = [
+            ("pair", ["As", "Ah"]),
+            ("suited", ["As", "Ks"]),
+            ("offsuit", ["As", "Kh"]),
+        ]
+
+        results = {}
+        for label, hand in hands:
+            completed, output = run_cli_json(
+                "strength",
+                {
+                    "game": "holdem",
+                    "board": [],
+                    "players": [{"name": label, "hand": hand}],
+                },
+            )
+
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(output["method"], "precomputed_table")
+            self.assertEqual(output["mode"], "projected")
+            self.assertEqual(output["completions_evaluated"], 2118760)
+            results[label] = output["players"][0]["rank_percentage"]
+
+        self.assertGreater(results["pair"], results["suited"])
+        self.assertGreater(results["suited"], results["offsuit"])
+
+        completed, output = run_cli_json(
+            "strength",
+            {
+                "game": "holdem",
+                "board": [],
+                "players": [{"name": "suited_alt", "hand": ["Ah", "Kh"]}],
+            },
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(results["suited"], output["players"][0]["rank_percentage"])
+
+        completed, output = run_cli_json(
+            "strength",
+            {
+                "game": "holdem",
+                "board": [],
+                "players": [
+                    {"name": "p1", "hand": ["As", "Ah"]},
+                    {"name": "p2", "hand": ["Ks", "Qh"]},
+                ],
+            },
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(output["method"], "precomputed_table")
+        self.assertEqual(len(output["players"]), 2)
+
+    def test_strength_rollout_supports_one_and_two_board_cards(self) -> None:
+        expected_completions = {
+            1: 211876,
+            2: 17296,
+        }
+
+        for board in [["Ah"], ["Ah", "Kd"]]:
+            with self.subTest(board=board):
+                completed, output = run_cli_json(
+                    "strength",
+                    {
+                        "game": "holdem",
+                        "board": board,
+                        "players": [{"name": "p1", "hand": ["Qs", "Th"]}],
+                    },
+                )
+
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(output["method"], "exact_rollout")
+                self.assertEqual(output["mode"], "projected")
+                self.assertEqual(output["completions_evaluated"], expected_completions[len(board)])
+                self.assertIn("rank_percentage", output["players"][0])
+                self.assertNotIn("rank", output["players"][0])
+
+    def test_strength_current_mode_matches_eval_rank_percentage(self) -> None:
+        payload = {
+            "game": "holdem",
+            "board": ["Ah", "Kd", "Jc"],
+            "players": [
+                {"name": "p1", "hand": ["Qs", "Th"]},
+                {"name": "p2", "hand": ["Ac", "Ad"]},
+            ],
+        }
+
+        eval_completed, eval_output = run_cli_json("eval", payload)
+        strength_completed, strength_output = run_cli_json("strength", payload)
+
+        self.assertEqual(eval_completed.returncode, 0, eval_completed.stderr)
+        self.assertEqual(strength_completed.returncode, 0, strength_completed.stderr)
+        self.assertEqual(strength_output["method"], "direct")
+        self.assertEqual(strength_output["mode"], "current")
+
+        for eval_player, strength_player in zip(eval_output["players"], strength_output["players"]):
+            self.assertEqual(eval_player["rank"], strength_player["rank"])
+            self.assertEqual(eval_player["class_name"], strength_player["class_name"])
+            self.assertEqual(eval_player["rank_percentage"], strength_player["rank_percentage"])
+
+    def test_strength_rejects_plo(self) -> None:
+        completed = run_cli(
+            "strength",
+            {
+                "game": "plo",
+                "board": [],
+                "players": [{"name": "p1", "hand": ["As", "Ah", "Ks", "Kh"]}],
+            },
+        )
+
+        self.assertEqual(completed.returncode, 2)
+        error = json.loads(completed.stderr)
+        self.assertIn("holdem only", error["error"]["message"])
+
+    def test_strength_pretty_output_is_human_readable(self) -> None:
+        completed = run_cli(
+            "strength",
+            {
+                "game": "holdem",
+                "board": [],
+                "players": [{"name": "p1", "hand": ["As", "Ah"]}],
+            },
+            "--pretty",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("Command: strength", completed.stdout)
+        self.assertIn("Method: precomputed_table", completed.stdout)
 
     def test_eval_supports_file_input(self) -> None:
         payload = {
