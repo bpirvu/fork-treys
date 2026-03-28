@@ -54,6 +54,10 @@ class TreysCLITests(unittest.TestCase):
                 self.assertEqual(output["players"][0]["class_name"], "Straight")
                 self.assertGreater(output["players"][0]["rank_percentage"], output["players"][1]["rank_percentage"])
                 self.assertEqual(output["players"][0]["rank_percentage"], output["players"][0]["percentage"])
+                self.assertEqual(
+                    output["players"][0]["rank_zero_to_hundred"],
+                    round(output["players"][0]["rank_percentage"] * 100),
+                )
 
     def test_plo_eval_accepts_three_four_and_five_board_cards(self) -> None:
         board_variants = [
@@ -119,6 +123,10 @@ class TreysCLITests(unittest.TestCase):
         self.assertEqual(
             output["stages"][0]["players"][0]["rank_percentage"],
             output["stages"][0]["players"][0]["percentage"],
+        )
+        self.assertEqual(
+            output["stages"][0]["players"][0]["rank_zero_to_hundred"],
+            round(output["stages"][0]["players"][0]["rank_percentage"] * 100),
         )
 
     def test_plo_summary_reports_lead_changes(self) -> None:
@@ -241,6 +249,10 @@ class TreysCLITests(unittest.TestCase):
             self.assertEqual(output["mode"], "projected")
             self.assertEqual(output["completions_evaluated"], 2118760)
             results[label] = output["players"][0]["rank_percentage"]
+            self.assertEqual(
+                output["players"][0]["rank_zero_to_hundred"],
+                round(output["players"][0]["rank_percentage"] * 100),
+            )
 
         self.assertGreater(results["pair"], results["suited"])
         self.assertGreater(results["suited"], results["offsuit"])
@@ -295,6 +307,7 @@ class TreysCLITests(unittest.TestCase):
                 self.assertEqual(output["mode"], "projected")
                 self.assertEqual(output["completions_evaluated"], expected_completions[len(board)])
                 self.assertIn("rank_percentage", output["players"][0])
+                self.assertIn("rank_zero_to_hundred", output["players"][0])
                 self.assertNotIn("rank", output["players"][0])
 
     def test_strength_current_mode_matches_eval_rank_percentage(self) -> None:
@@ -319,6 +332,7 @@ class TreysCLITests(unittest.TestCase):
             self.assertEqual(eval_player["rank"], strength_player["rank"])
             self.assertEqual(eval_player["class_name"], strength_player["class_name"])
             self.assertEqual(eval_player["rank_percentage"], strength_player["rank_percentage"])
+            self.assertEqual(eval_player["rank_zero_to_hundred"], strength_player["rank_zero_to_hundred"])
 
     def test_strength_rejects_plo(self) -> None:
         completed = run_cli(
@@ -348,6 +362,7 @@ class TreysCLITests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("Command: strength", completed.stdout)
         self.assertIn("Method: precomputed_table", completed.stdout)
+        self.assertIn("/100", completed.stdout)
 
     def test_eval_supports_file_input(self) -> None:
         payload = {

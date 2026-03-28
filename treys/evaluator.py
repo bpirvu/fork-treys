@@ -135,6 +135,13 @@ class Evaluator:
         """
         return 1.0 - self.get_five_card_rank_percentage(hand_rank)
 
+    @staticmethod
+    def rank_percentage_to_zero_to_hundred(rank_percentage: float) -> int:
+        """
+        Converts a rank percentage into an integer score in the [0, 100] range.
+        """
+        return max(0, min(100, int(round(rank_percentage * 100))))
+
     def hand_summary_data(self, board: list[int], hands: list[list[int]]) -> dict[str, object]:
         """
         Returns a structured summary of the hand as the board develops.
@@ -158,13 +165,15 @@ class Evaluator:
             for player_index, hand in enumerate(hands, start=1):
                 rank = self.evaluate(hand, current_board)
                 rank_class = self.get_rank_class(rank)
+                rank_percentage = self.get_rank_percentage(rank)
                 player_summaries.append({
                     "player": player_index,
                     "rank": rank,
                     "class_id": rank_class,
                     "class_name": self.class_to_string(rank_class),
-                    "rank_percentage": self.get_rank_percentage(rank),
-                    "percentage": self.get_rank_percentage(rank),
+                    "rank_percentage": rank_percentage,
+                    "rank_zero_to_hundred": self.rank_percentage_to_zero_to_hundred(rank_percentage),
+                    "percentage": rank_percentage,
                 })
 
                 if rank == best_rank:

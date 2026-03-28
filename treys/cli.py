@@ -189,6 +189,7 @@ def run_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 "class_id": player_result["class_id"],
                 "class_name": player_result["class_name"],
                 "rank_percentage": player_result["rank_percentage"],
+                "rank_zero_to_hundred": player_result["rank_zero_to_hundred"],
                 "percentage": player_result["percentage"],
             })
 
@@ -249,11 +250,13 @@ def run_strength(payload: dict[str, Any]) -> dict[str, Any]:
     if len(request["board"]) == 0:
         players = []
         for player, hand_ints in zip(request["players"], hands_ints):
+            rank_percentage = preflop_rank_percentage(hand_ints)
             players.append({
                 "index": player["index"],
                 "name": player["name"],
                 "hand": player["hand"],
-                "rank_percentage": preflop_rank_percentage(hand_ints),
+                "rank_percentage": rank_percentage,
+                "rank_zero_to_hundred": rank_percentage_to_zero_to_hundred(rank_percentage),
             })
         return {
             "command": "strength",
@@ -278,6 +281,7 @@ def run_strength(payload: dict[str, Any]) -> dict[str, Any]:
                 "name": player["name"],
                 "hand": player["hand"],
                 "rank_percentage": rank_percentage,
+                "rank_zero_to_hundred": rank_percentage_to_zero_to_hundred(rank_percentage),
             })
 
         return {
@@ -301,6 +305,7 @@ def run_strength(payload: dict[str, Any]) -> dict[str, Any]:
             "class_id": player_result["class_id"],
             "class_name": player_result["class_name"],
             "rank_percentage": player_result["rank_percentage"],
+            "rank_zero_to_hundred": player_result["rank_zero_to_hundred"],
         })
 
     return {
@@ -463,6 +468,7 @@ def build_ranked_player_result(
     rank = evaluator.evaluate(hand_ints, board_ints)
     class_id = evaluator.get_rank_class(rank)
     rank_percentage = evaluator.get_rank_percentage(rank)
+    rank_zero_to_hundred = evaluator.rank_percentage_to_zero_to_hundred(rank_percentage)
     return {
         "index": player["index"],
         "name": player["name"],
@@ -471,8 +477,13 @@ def build_ranked_player_result(
         "class_id": class_id,
         "class_name": evaluator.class_to_string(class_id),
         "rank_percentage": rank_percentage,
+        "rank_zero_to_hundred": rank_zero_to_hundred,
         "percentage": rank_percentage,
     }
+
+
+def rank_percentage_to_zero_to_hundred(rank_percentage: float) -> int:
+    return Evaluator.rank_percentage_to_zero_to_hundred(rank_percentage)
 
 
 def parse_cards(
@@ -592,13 +603,14 @@ def format_eval(result: dict[str, Any]) -> str:
 
     for player in result["players"]:
         lines.append(
-            "Player {index} ({name}): {hand} -> rank {rank}, {class_name}, rank percentage {percentage:.6f}".format(
+            "Player {index} ({name}): {hand} -> rank {rank}, {class_name}, rank percentage {percentage:.6f} ({zero_to_hundred}/100)".format(
                 index=player["index"],
                 name=player["name"],
                 hand=" ".join(player["hand"]),
                 rank=player["rank"],
                 class_name=player["class_name"],
                 percentage=player["rank_percentage"],
+                zero_to_hundred=player["rank_zero_to_hundred"],
             )
         )
 
@@ -620,12 +632,13 @@ def format_summary(result: dict[str, Any]) -> str:
         lines.append("Board: {}".format(" ".join(stage["board"])))
         for player in stage["players"]:
             lines.append(
-                "Player {index} ({name}): rank {rank}, {class_name}, rank percentage {percentage:.6f}".format(
+                "Player {index} ({name}): rank {rank}, {class_name}, rank percentage {percentage:.6f} ({zero_to_hundred}/100)".format(
                     index=player["index"],
                     name=player["name"],
                     rank=player["rank"],
                     class_name=player["class_name"],
                     percentage=player["rank_percentage"],
+                    zero_to_hundred=player["rank_zero_to_hundred"],
                 )
             )
         leader_names = ", ".join(leader["name"] for leader in stage["leaders"])
@@ -669,11 +682,12 @@ def format_strength(result: dict[str, Any]) -> str:
     ]
 
     for player in result["players"]:
-        base = "Player {index} ({name}): {hand} -> rank percentage {rank_percentage:.6f}".format(
+        base = "Player {index} ({name}): {hand} -> rank percentage {rank_percentage:.6f} ({rank_zero_to_hundred}/100)".format(
             index=player["index"],
             name=player["name"],
             hand=" ".join(player["hand"]),
             rank_percentage=player["rank_percentage"],
+            rank_zero_to_hundred=player["rank_zero_to_hundred"],
         )
         if "rank" in player:
             base += ", rank {rank}, {class_name}".format(
