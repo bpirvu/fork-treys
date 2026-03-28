@@ -22,5 +22,10 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python :: 3',
         'Topic :: Games/Entertainment'
-    ]
+    ],
+    entry_points={
+        'console_scripts': [
+            'treys=treys.cli:main',
+        ],
+    },
 )
