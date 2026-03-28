@@ -146,3 +146,25 @@ game with relation to hand strength:
 
    ========== HAND OVER ==========
    Player 2 is the winner with a Straight
+
+CLI
+---
+
+Treys also includes a JSON-first CLI with subcommands for evaluation,
+street-by-street summaries, random dealing, and benchmarks.
+
+Evaluate a Hold'em board from stdin:
+
+.. code:: bash
+
+   $ treys eval <<'EOF'
+   {"game":"holdem","board":["Ah","Kd","Jc"],"players":[{"name":"p1","hand":["Qs","Th"]}]}
+   EOF
+
+Request human-readable output instead of JSON:
+
+.. code:: bash
+
+   $ treys eval --pretty <<'EOF'
+   {"game":"holdem","board":["Ah","Kd","Jc"],"players":[{"name":"p1","hand":["Qs","Th"]}]}
+   EOF
