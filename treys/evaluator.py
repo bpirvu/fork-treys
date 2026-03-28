@@ -129,6 +129,12 @@ class Evaluator:
         """
         return float(hand_rank) / float(LookupTable.MAX_HIGH_CARD)
 
+    def get_rank_percentage(self, hand_rank: int) -> float:
+        """
+        Returns a higher-is-better strength value in the [0.0, 1.0] range.
+        """
+        return 1.0 - self.get_five_card_rank_percentage(hand_rank)
+
     def hand_summary_data(self, board: list[int], hands: list[list[int]]) -> dict[str, object]:
         """
         Returns a structured summary of the hand as the board develops.
@@ -157,7 +163,8 @@ class Evaluator:
                     "rank": rank,
                     "class_id": rank_class,
                     "class_name": self.class_to_string(rank_class),
-                    "percentage": 1.0 - self.get_five_card_rank_percentage(rank),
+                    "rank_percentage": self.get_rank_percentage(rank),
+                    "percentage": self.get_rank_percentage(rank),
                 })
 
                 if rank == best_rank:
@@ -208,7 +215,7 @@ class Evaluator:
                     "Player {} hand = {}, percentage rank among all hands = {}".format(
                         player["player"],
                         player["class_name"],
-                        player["percentage"],
+                        player["rank_percentage"],
                     )
                 )
 
