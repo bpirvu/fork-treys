@@ -129,6 +129,65 @@ class Evaluator:
         """
         return float(hand_rank) / float(LookupTable.MAX_HIGH_CARD)
 
+    def hand_summary_data(self, board: list[int], hands: list[list[int]]) -> dict[str, object]:
+        """
+        Returns a structured summary of the hand as the board develops.
+
+        Requires that the board is in chronological order for the
+        analysis to make sense.
+        """
+
+        assert len(board) == self.BOARD_LENGTH, "Invalid board length"
+        for hand in hands:
+            assert len(hand) == self.HAND_LENGTH, "Invalid hand length"
+
+        stages: list[dict[str, object]] = []
+
+        for stage_index, stage_name in enumerate(["FLOP", "TURN", "RIVER"]):
+            current_board = board[:(stage_index + 3)]
+            best_rank = LookupTable.MAX_HIGH_CARD + 1
+            leaders: list[int] = []
+            player_summaries: list[dict[str, object]] = []
+
+            for player_index, hand in enumerate(hands, start=1):
+                rank = self.evaluate(hand, current_board)
+                rank_class = self.get_rank_class(rank)
+                player_summaries.append({
+                    "player": player_index,
+                    "rank": rank,
+                    "class_id": rank_class,
+                    "class_name": self.class_to_string(rank_class),
+                    "percentage": 1.0 - self.get_five_card_rank_percentage(rank),
+                })
+
+                if rank == best_rank:
+                    leaders.append(player_index)
+                elif rank < best_rank:
+                    leaders = [player_index]
+                    best_rank = rank
+
+            stages.append({
+                "stage": stage_name,
+                "board": list(current_board),
+                "players": player_summaries,
+                "leaders": leaders,
+            })
+
+        final_rank = self.evaluate(hands[stages[-1]["leaders"][0] - 1], board)
+        final_class_id = self.get_rank_class(final_rank)
+
+        result = {
+            "winners": list(stages[-1]["leaders"]),
+            "rank": final_rank,
+            "class_id": final_class_id,
+            "class_name": self.class_to_string(final_class_id),
+        }
+
+        return {
+            "stages": stages,
+            "result": result,
+        }
+
     def hand_summary(self, board: list[int], hands: list[list[int]]) -> None:
         """
         Gives a sumamry of the hand with ranks as time proceeds. 
@@ -137,52 +196,44 @@ class Evaluator:
         analysis to make sense.
         """
 
-        assert len(board) == self.BOARD_LENGTH, "Invalid board length"
-        for hand in hands:
-            assert len(hand) == self.HAND_LENGTH, "Invalid hand length"
-
         line_length = 10
-        stages = ["FLOP", "TURN", "RIVER"]
+        summary = self.hand_summary_data(board, hands)
 
-        for i in range(len(stages)):
+        for stage in summary["stages"]:
             line = "=" * line_length
-            print("{} {} {}".format(line,stages[i],line))
-            
-            best_rank = 7463  # rank one worse than worst hand
-            winners = []
-            for player, hand in enumerate(hands):
+            print("{} {} {}".format(line, stage["stage"], line))
 
-                # evaluate current board position
-                rank = self.evaluate(hand, board[:(i + 3)])
-                rank_class = self.get_rank_class(rank)
-                class_string = self.class_to_string(rank_class)
-                percentage = 1.0 - self.get_five_card_rank_percentage(rank)  # higher better here
-                print("Player {} hand = {}, percentage rank among all hands = {}".format(player + 1, class_string, percentage))
+            for player in stage["players"]:
+                print(
+                    "Player {} hand = {}, percentage rank among all hands = {}".format(
+                        player["player"],
+                        player["class_name"],
+                        player["percentage"],
+                    )
+                )
 
-                # detect winner
-                if rank == best_rank:
-                    winners.append(player)
-                    best_rank = rank
-                elif rank < best_rank:
-                    winners = [player]
-                    best_rank = rank
-
-            # if we're not on the river
-            if i != stages.index("RIVER"):
-                if len(winners) == 1:
-                    print("Player {} hand is currently winning.\n".format(winners[0] + 1))
+            if stage["stage"] != "RIVER":
+                if len(stage["leaders"]) == 1:
+                    print("Player {} hand is currently winning.\n".format(stage["leaders"][0]))
                 else:
-                    print("Players {} are tied for the lead.\n".format([x + 1 for x in winners]))
-
-            # otherwise on all other streets
+                    print("Players {} are tied for the lead.\n".format(stage["leaders"]))
             else:
-                hand_result = self.class_to_string(self.get_rank_class(self.evaluate(hands[winners[0]], board)))
                 print()
                 print("{} HAND OVER {}".format(line, line))
-                if len(winners) == 1:
-                    print("Player {} is the winner with a {}\n".format(winners[0] + 1, hand_result))
+                if len(summary["result"]["winners"]) == 1:
+                    print(
+                        "Player {} is the winner with a {}\n".format(
+                            summary["result"]["winners"][0],
+                            summary["result"]["class_name"],
+                        )
+                    )
                 else:
-                    print("Players {} tied for the win with a {}\n".format([x + 1 for x in winners],hand_result))
+                    print(
+                        "Players {} tied for the win with a {}\n".format(
+                            summary["result"]["winners"],
+                            summary["result"]["class_name"],
+                        )
+                    )
 
 
 class PLOEvaluator(Evaluator):
