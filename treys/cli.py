@@ -8,6 +8,8 @@ from typing import Any
 from .card import Card
 from .deck import Deck
 from .evaluator import Evaluator, PLOEvaluator
+from .preflop_table import PRE_FLOP_TOTAL_BOARDS
+from .strength import exact_projected_rank_percentages, preflop_rank_percentage
 
 
 GAME_HAND_SIZES = {
@@ -47,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Summarize hand strength across flop, turn, and river.",
     )
     subparsers.add_parser(
+        "strength",
+        parents=[common],
+        help="Return current or projected Hold'em rank strength for 0-5 board cards.",
+    )
+    subparsers.add_parser(
         "deal",
         parents=[common],
         help="Deal random board and player hands.",
@@ -70,6 +77,8 @@ def main(argv: list[str] | None = None) -> int:
             result = run_eval(payload)
         elif args.command == "summary":
             result = run_summary(payload)
+        elif args.command == "strength":
+            result = run_strength(payload)
         elif args.command == "deal":
             result = run_deal(payload)
         elif args.command == "bench":
@@ -113,7 +122,15 @@ def load_payload(source: str | None) -> dict[str, Any]:
 
 
 def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
-    request = parse_game_state_payload(payload, require_full_board=False)
+    request = parse_game_state_payload(
+        payload,
+        minimum_board_length=3,
+        require_full_board=False,
+        short_board_error=(
+            "eval requires 3-5 board cards to score a current hand. "
+            "For Hold'em 0-2 board cards, use treys strength instead."
+        ),
+    )
     evaluator = create_evaluator(request["game"])
     board_ints = Card.hand_to_binary(request["board"])
 
@@ -123,18 +140,9 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
 
     for player in request["players"]:
         hand_ints = Card.hand_to_binary(player["hand"])
-        rank = evaluator.evaluate(hand_ints, board_ints)
-        class_id = evaluator.get_rank_class(rank)
-        player_result = {
-            "index": player["index"],
-            "name": player["name"],
-            "hand": player["hand"],
-            "rank": rank,
-            "class_id": class_id,
-            "class_name": evaluator.class_to_string(class_id),
-            "percentage": 1.0 - evaluator.get_five_card_rank_percentage(rank),
-        }
+        player_result = build_ranked_player_result(evaluator, player, hand_ints, board_ints)
         results.append(player_result)
+        rank = player_result["rank"]
 
         if best_rank is None or rank < best_rank:
             best_rank = rank
@@ -158,7 +166,11 @@ def run_eval(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def run_summary(payload: dict[str, Any]) -> dict[str, Any]:
-    request = parse_game_state_payload(payload, require_full_board=True)
+    request = parse_game_state_payload(
+        payload,
+        minimum_board_length=3,
+        require_full_board=True,
+    )
     evaluator = create_evaluator(request["game"])
     board_ints = Card.hand_to_binary(request["board"])
     hands_ints = [Card.hand_to_binary(player["hand"]) for player in request["players"]]
@@ -176,6 +188,7 @@ def run_summary(payload: dict[str, Any]) -> dict[str, Any]:
                 "rank": player_result["rank"],
                 "class_id": player_result["class_id"],
                 "class_name": player_result["class_name"],
+                "rank_percentage": player_result["rank_percentage"],
                 "percentage": player_result["percentage"],
             })
 
@@ -217,6 +230,87 @@ def run_summary(payload: dict[str, Any]) -> dict[str, Any]:
             "class_id": summary["result"]["class_id"],
             "class_name": summary["result"]["class_name"],
         },
+    }
+
+
+def run_strength(payload: dict[str, Any]) -> dict[str, Any]:
+    request = parse_game_state_payload(
+        payload,
+        minimum_board_length=0,
+        require_full_board=False,
+    )
+    if request["game"] != "holdem":
+        raise ValidationError("strength currently supports game=holdem only")
+
+    evaluator = Evaluator()
+    board_ints = Card.hand_to_binary(request["board"])
+    hands_ints = [Card.hand_to_binary(player["hand"]) for player in request["players"]]
+
+    if len(request["board"]) == 0:
+        players = []
+        for player, hand_ints in zip(request["players"], hands_ints):
+            players.append({
+                "index": player["index"],
+                "name": player["name"],
+                "hand": player["hand"],
+                "rank_percentage": preflop_rank_percentage(hand_ints),
+            })
+        return {
+            "command": "strength",
+            "game": request["game"],
+            "board": request["board"],
+            "mode": "projected",
+            "method": "precomputed_table",
+            "completions_evaluated": PRE_FLOP_TOTAL_BOARDS,
+            "players": players,
+        }
+
+    if len(request["board"]) < 3:
+        rank_percentages, completion_count = exact_projected_rank_percentages(
+            evaluator,
+            board_ints,
+            hands_ints,
+        )
+        players = []
+        for player, rank_percentage in zip(request["players"], rank_percentages):
+            players.append({
+                "index": player["index"],
+                "name": player["name"],
+                "hand": player["hand"],
+                "rank_percentage": rank_percentage,
+            })
+
+        return {
+            "command": "strength",
+            "game": request["game"],
+            "board": request["board"],
+            "mode": "projected",
+            "method": "exact_rollout",
+            "completions_evaluated": completion_count,
+            "players": players,
+        }
+
+    players = []
+    for player, hand_ints in zip(request["players"], hands_ints):
+        player_result = build_ranked_player_result(evaluator, player, hand_ints, board_ints)
+        players.append({
+            "index": player_result["index"],
+            "name": player_result["name"],
+            "hand": player_result["hand"],
+            "rank": player_result["rank"],
+            "class_id": player_result["class_id"],
+            "class_name": player_result["class_name"],
+            "rank_percentage": player_result["rank_percentage"],
+        })
+
+    return {
+        "command": "strength",
+        "game": request["game"],
+        "board": request["board"],
+        "mode": "current",
+        "method": "direct",
+        "completions_evaluated": 1,
+        "players": players,
     }
 
 
@@ -286,15 +380,24 @@ def run_bench(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def parse_game_state_payload(payload: dict[str, Any], require_full_board: bool) -> dict[str, Any]:
+def parse_game_state_payload(
+    payload: dict[str, Any],
+    minimum_board_length: int,
+    require_full_board: bool,
+    short_board_error: str | None = None,
+) -> dict[str, Any]:
     game = parse_game(payload)
     hand_size = GAME_HAND_SIZES[game]
     board = parse_cards(
         payload.get("board"),
         "board",
-        minimum_length=3,
         maximum_length=5,
     )
+
+    if len(board) < minimum_board_length:
+        if short_board_error is not None:
+            raise ValidationError(short_board_error)
+        raise ValidationError(f"board must contain at least {minimum_board_length} cards")
 
     if require_full_board and len(board) != 5:
         raise ValidationError("summary requires exactly 5 board cards")
@@ -349,6 +452,27 @@ def parse_game(payload: dict[str, Any]) -> str:
         allowed = ", ".join(sorted(GAME_HAND_SIZES))
         raise ValidationError(f"game must be one of: {allowed}")
     return normalized
+
+
+def build_ranked_player_result(
+    evaluator: Evaluator,
+    player: dict[str, Any],
+    hand_ints: list[int],
+    board_ints: list[int],
+) -> dict[str, Any]:
+    rank = evaluator.evaluate(hand_ints, board_ints)
+    class_id = evaluator.get_rank_class(rank)
+    rank_percentage = evaluator.get_rank_percentage(rank)
+    return {
+        "index": player["index"],
+        "name": player["name"],
+        "hand": player["hand"],
+        "rank": rank,
+        "class_id": class_id,
+        "class_name": evaluator.class_to_string(class_id),
+        "rank_percentage": rank_percentage,
+        "percentage": rank_percentage,
+    }
 
 
 def parse_cards(
@@ -434,6 +558,8 @@ def write_output(command: str, result: dict[str, Any], pretty: bool) -> None:
             sys.stdout.write(format_eval(result))
         elif command == "summary":
             sys.stdout.write(format_summary(result))
+        elif command == "strength":
+            sys.stdout.write(format_strength(result))
         elif command == "deal":
             sys.stdout.write(format_deal(result))
         elif command == "bench":
@@ -466,13 +592,13 @@ def format_eval(result: dict[str, Any]) -> str:
 
     for player in result["players"]:
         lines.append(
-            "Player {index} ({name}): {hand} -> rank {rank}, {class_name}, percentage {percentage:.6f}".format(
+            "Player {index} ({name}): {hand} -> rank {rank}, {class_name}, rank percentage {percentage:.6f}".format(
                 index=player["index"],
                 name=player["name"],
                 hand=" ".join(player["hand"]),
                 rank=player["rank"],
                 class_name=player["class_name"],
-                percentage=player["percentage"],
+                percentage=player["rank_percentage"],
             )
         )
 
@@ -494,12 +620,12 @@ def format_summary(result: dict[str, Any]) -> str:
         lines.append("Board: {}".format(" ".join(stage["board"])))
         for player in stage["players"]:
             lines.append(
-                "Player {index} ({name}): rank {rank}, {class_name}, percentage {percentage:.6f}".format(
+                "Player {index} ({name}): rank {rank}, {class_name}, rank percentage {percentage:.6f}".format(
                     index=player["index"],
                     name=player["name"],
                     rank=player["rank"],
                     class_name=player["class_name"],
-                    percentage=player["percentage"],
+                    percentage=player["rank_percentage"],
                 )
             )
         leader_names = ", ".join(leader["name"] for leader in stage["leaders"])
@@ -529,6 +655,33 @@ def format_deal(result: dict[str, Any]) -> str:
             name=player["name"],
             hand=" ".join(player["hand"]),
         ))
+    return "\n".join(lines)
+
+
+def format_strength(result: dict[str, Any]) -> str:
+    lines = [
+        "Command: strength",
+        f"Game: {result['game']}",
+        "Board: {}".format(" ".join(result["board"]) if result["board"] else "(empty)"),
+        f"Mode: {result['mode']}",
+        f"Method: {result['method']}",
+        f"Completions evaluated: {result['completions_evaluated']}",
+    ]
+
+    for player in result["players"]:
+        base = "Player {index} ({name}): {hand} -> rank percentage {rank_percentage:.6f}".format(
+            index=player["index"],
+            name=player["name"],
+            hand=" ".join(player["hand"]),
+            rank_percentage=player["rank_percentage"],
+        )
+        if "rank" in player:
+            base += ", rank {rank}, {class_name}".format(
+                rank=player["rank"],
+                class_name=player["class_name"],
+            )
+        lines.append(base)
+
     return "\n".join(lines)
 
 
