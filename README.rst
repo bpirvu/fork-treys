@@ -151,7 +151,8 @@ CLI
 ---
 
 Treys also includes a JSON-first CLI with subcommands for evaluation,
-street-by-street summaries, random dealing, and benchmarks.
+street-by-street summaries, current/projected Hold'em strength, random
+dealing, and benchmarks.
 
 Evaluate a Hold'em board from stdin:
 
@@ -168,3 +169,14 @@ Request human-readable output instead of JSON:
    $ treys eval --pretty <<'EOF'
    {"game":"holdem","board":["Ah","Kd","Jc"],"players":[{"name":"p1","hand":["Qs","Th"]}]}
    EOF
+
+Current or projected Hold'em rank strength:
+
+.. code:: bash
+
+   $ treys strength <<'EOF'
+   {"game":"holdem","board":[],"players":[{"name":"p1","hand":["As","Ah"]}]}
+   EOF
+
+The ``rank_percentage`` field is a normalized hand-strength metric, not
+pot-winning probability.
